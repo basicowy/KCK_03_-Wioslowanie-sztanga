@@ -1,2 +1,19 @@
+# Systemowe
 .DS_Store
 **/.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+.env
+
+# Edytory
+.vscode/
+.idea/
+
+# Logi i bazy
+*.log
+*.sqlite
