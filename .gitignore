@@ -3,6 +3,7 @@
 **/.DS_Store
 Thumbs.db
 
+
 # Python
 __pycache__/
 *.pyc
@@ -17,6 +18,11 @@ env/
 # Logi i bazy
 *.log
 *.sqlite
+*.db
 
 # Node modules
 node_modules/
+
+#Builds
+dist/
+

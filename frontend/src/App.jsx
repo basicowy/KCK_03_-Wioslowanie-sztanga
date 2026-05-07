@@ -3,6 +3,8 @@ import "./App.css";
 
 
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "";
+
 const pickSecondaryDevice = (devices, primaryDeviceId) => {
   return devices.find((device) => device.deviceId && device.deviceId !== primaryDeviceId) || null;
 };
@@ -109,7 +111,7 @@ export default function App() {
 
     try {
       const endpoint = authMode === "register" ? "/auth/register" : "/auth/login";
-      const response = await fetch(`http://localhost:8000${endpoint}`, {
+      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
