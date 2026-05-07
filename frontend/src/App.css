@@ -69,6 +69,12 @@
   backdrop-filter: blur(14px);
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .logo {
   display: flex;
   align-items: center;
@@ -97,6 +103,16 @@
   border-radius: 999px;
   font-size: 0.85rem;
   color: var(--accent);
+  font-weight: 600;
+}
+
+.user-chip {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--ink);
   font-weight: 600;
 }
 
@@ -163,6 +179,21 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.auth-error {
+  color: #ff8c82;
+  font-size: 0.9rem;
+}
+
+.auth-toggle {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
 }
 
 .field {

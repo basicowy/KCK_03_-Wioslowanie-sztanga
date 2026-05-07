@@ -12,6 +12,10 @@ export default function App() {
   const [isAuthed, setIsAuthed] = useState(false);
   const [accessId, setAccessId] = useState("");
   const [accessKey, setAccessKey] = useState("");
+  const [authMode, setAuthMode] = useState("login");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [displayName, setDisplayName] = useState("");
 
   const [voiceOn, setVoiceOn] = useState(false);
   const [mirrorRight, setMirrorRight] = useState(false);
@@ -94,13 +98,46 @@ export default function App() {
 
   const canEnter = accessId.trim().length > 0 || accessKey.trim().length > 0;
 
-  const handleLoginSubmit = (event) => {
+  const handleLoginSubmit = async (event) => {
     event.preventDefault();
-    if (!canEnter) {
+    if (!canEnter || authLoading) {
       return;
     }
-    setIsAuthed(true);
-    setView("menu");
+
+    setAuthError("");
+    setAuthLoading(true);
+
+    try {
+      const endpoint = authMode === "register" ? "/auth/register" : "/auth/login";
+      const response = await fetch(`http://localhost:8000${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: accessId,
+          password: accessKey,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const detail = payload?.detail || "Blad logowania";
+        setAuthError(detail);
+        return;
+      }
+
+      const payload = await response.json();
+      setDisplayName(payload.username || accessId);
+      setIsAuthed(true);
+      setView("menu");
+      setAccessKey("");
+    } catch (error) {
+      setAuthError("Brak polaczenia z backendem");
+      console.error(error);
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -157,10 +194,25 @@ export default function App() {
                     placeholder="dowolny tekst"
                   />
                 </label>
-                <button className="btn btn--primary" type="submit" disabled={!canEnter}>
-                  Zaloguj się
+                <button className="btn btn--primary" type="submit" disabled={!canEnter || authLoading}>
+                  {authLoading
+                    ? "Laczenie..."
+                    : authMode === "register"
+                    ? "Utworz konto"
+                    : "Zaloguj sie"}
                 </button>
-                <p className="auth-hint">Demo: wpisz losowe litery, by wejść dalej.</p>
+                {authError ? <p className="auth-error">{authError}</p> : null}
+                <button
+                  className="auth-toggle"
+                  type="button"
+                  onClick={() =>
+                    setAuthMode((prev) => (prev === "login" ? "register" : "login"))
+                  }
+                >
+                  {authMode === "login"
+                    ? "Nie masz konta? Utworz je"
+                    : "Masz konto? Zaloguj sie"}
+                </button>
               </form>
             </div>
           </section>
@@ -171,7 +223,10 @@ export default function App() {
                 <span className="logo-mark"></span>
                 <span className="logo-text">KCK Form Studio</span>
               </div>
-              <div className="status-chip">Szkielet: live preview</div>
+              <div className="topbar-right">
+                <div className="user-chip">Zalogowany: {displayName || accessId}</div>
+                <div className="status-chip">Szkielet: live preview</div>
+              </div>
             </header>
 
             <section className={`view view--menu ${view === "menu" ? "is-active" : ""}`}>
