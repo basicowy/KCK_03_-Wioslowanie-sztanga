@@ -1,0 +1,4 @@
+SpeechRecognition
+edge-tts
+pygame
+pyaudio
