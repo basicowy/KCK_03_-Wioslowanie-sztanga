@@ -8,6 +8,41 @@ Training interface with a dual camera preview and a simple demo login panel.
 - Voice mode toggle (on/off).
 - Demo login and registration backed by the API.
 
+## Voice feature (audio assistant)
+
+The frontend includes a voice mode toggle in the workout view (currently UI-only).
+
+The repository also includes a simple Polish voice assistant prototype in `audio/`:
+
+- Text-to-speech via `edge-tts` (speaks prompts to the user)
+- Speech recognition via `SpeechRecognition` (listens on the microphone)
+- Example flow: waits for a command like "start" and responds with spoken feedback
+
+Run it locally:
+
+```
+cd audio
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+- Windows (PowerShell): `.venv\Scripts\Activate.ps1`
+- Windows (cmd): `.venv\Scripts\activate`
+- macOS/Linux: `source .venv/bin/activate`
+
+Then install and run:
+
+```
+pip install -r requirements.txt
+python main.py
+```
+
+Notes:
+
+- Requires a working microphone.
+- `pyaudio` may require OS-specific setup if installation fails.
+
 ## Stack
 
 - Frontend: React 18, Vite 5, CSS
