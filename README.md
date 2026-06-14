@@ -1,39 +1,110 @@
-# KCK_03 - Fitness app for barbell row form control
+# KCK_03 - Barbell Row Form Studio
 
-Training interface with a dual camera preview and a simple demo login panel.
+Fitness training app for barbell row technique analysis. The project combines a
+React camera interface, MediaPipe pose detection, a FastAPI backend, and a small
+Polish voice assistant prototype.
 
 ## Features
 
-- Two camera previews (if only one camera is available, the second view is mirrored).
-- Voice mode toggle (on/off).
-- Demo login and registration backed by the API.
+- Login and registration backed by a local SQLite database.
+- Live camera preview in the browser.
+- MediaPipe pose landmark detection rendered over the camera feed.
+- WebSocket feedback loop between the frontend and backend.
+- Barbell row calibration, movement phase tracking, repetition counting, and
+  simple posture warnings.
+- Voice assistant toggle in the frontend UI.
+- Separate `audio/` prototype for Polish speech recognition and text-to-speech.
 
-## Voice feature (audio assistant)
+## Tech Stack
 
-The frontend includes a voice mode toggle in the workout view (currently UI-only).
+- Frontend: React 18, Vite, CSS, MediaPipe Tasks Vision.
+- Backend: FastAPI, SQLite, NumPy, WebSockets.
+- Audio prototype: SpeechRecognition, edge-tts, pygame, PyAudio.
 
-The repository also includes a simple Polish voice assistant prototype in `audio/`:
+## Requirements
 
-- Text-to-speech via `edge-tts` (speaks prompts to the user)
-- Speech recognition via `SpeechRecognition` (listens on the microphone)
-- Example flow: waits for a command like "start" and responds with spoken feedback
+- Node.js 18+.
+- Python 3.10+.
+- A webcam and browser camera permissions.
+- Internet access while loading MediaPipe model and WASM assets from CDNs.
+- A microphone for the optional audio assistant.
 
-Run it locally:
+## Quick Start
 
-```
-cd audio
+Run the backend and frontend in separate terminals.
+
+### Backend
+
+```bash
+cd backend
 python -m venv .venv
 ```
 
 Activate the virtual environment:
 
-- Windows (PowerShell): `.venv\Scripts\Activate.ps1`
-- Windows (cmd): `.venv\Scripts\activate`
-- macOS/Linux: `source .venv/bin/activate`
-
-Then install and run:
-
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
+
+On macOS/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies and start the API:
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+The backend runs at `http://127.0.0.1:8000`. It creates the local database at
+`backend/app.db` on startup.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The Vite app runs at `http://localhost:5173`.
+
+## Configuration
+
+The frontend defaults to the local backend:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+VITE_WS_URL=ws://localhost:8000/ws
+```
+
+Create `frontend/.env.local` if you need to override those values.
+
+## How It Works
+
+1. The frontend opens the webcam and initializes MediaPipe Pose Landmarker.
+2. Pose landmarks are drawn on the camera canvas.
+3. Landmarks are sent to the backend through `ws://localhost:8000/ws`.
+4. The backend calibrates the start position, estimates movement phase, counts
+   reps, and returns feedback messages.
+5. The frontend displays the current phase, rep count, and correction messages.
+
+## Audio Assistant Prototype
+
+The `audio/` folder contains a standalone Polish voice assistant prototype. It
+is not wired into the frontend yet.
+
+```bash
+cd audio
+python -m venv .venv
+```
+
+Activate the environment, then run:
+
+```bash
 pip install -r requirements.txt
 python main.py
 ```
@@ -41,55 +112,16 @@ python main.py
 Notes:
 
 - Requires a working microphone.
-- `pyaudio` may require OS-specific setup if installation fails.
+- `pyaudio` may need system-specific setup if installation fails.
+- The prototype listens for a command similar to `start` and responds with
+  synthesized Polish speech.
 
-## Stack
+## Project Structure
 
-- Frontend: React 18, Vite 5, CSS
-- Backend: FastAPI, SQLite
-
-## Requirements
-
-- Node.js 18+ (or 20+)
-- Python 3.10+
-- Camera access (works on HTTPS or localhost)
-
-## Quick start
-
-### Frontend
-
-```
-cd frontend
-npm install
-npm run dev
-```
-
-Vite will start the app at `http://localhost:5173`.
-
-### Backend
-
-```
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
-```
-
-The backend runs at `http://127.0.0.1:8000` and creates a SQLite database at `backend/app.db`.
-
-## Frontend-backend config
-
-The frontend uses `VITE_API_BASE_URL`. For local development set, for example:
-
-```
-VITE_API_BASE_URL=http://127.0.0.1:8000
-```
-
-## Structure
-
-```
+```text
 audio/
+  main.py
+  requirements.txt
 backend/
   main.py
   requirements.txt
@@ -103,10 +135,24 @@ frontend/
     index.css
     main.jsx
 vision/
+  .gitkeep
 ```
 
-## Notes
+## Useful Commands
 
-- The browser may require permission to access cameras.
-- Login is a demo flow backed by a local SQLite database.
-- The mirrored secondary view appears when only one camera is detected.
+```bash
+# Frontend production build
+cd frontend
+npm run build
+
+# Backend development server
+cd backend
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+## Development Notes
+
+- Camera access works on `localhost`; production deployments should use HTTPS.
+- The backend CORS configuration currently allows the local Vite origins.
+- Authentication is intended for local/demo use and stores users in SQLite.
+- The `vision/` directory is reserved for future vision-related assets or code.
