@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import hashlib
 import os
 import secrets
@@ -32,10 +32,25 @@ class AuthPayload(BaseModel):
     password: str
 
 
+class TrainingSessionPayload(BaseModel):
+    username: str
+    reps: int = Field(ge=0)
+    phase: str = "ZAKOŃCZONO"
+    messages: list[str] = Field(default_factory=list)
+    started_at: str | None = None
+
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def ensure_column(conn, table: str, column: str, definition: str):
+    columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def init_db():
@@ -52,6 +67,28 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS training_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                reps INTEGER NOT NULL DEFAULT 0,
+                good_count INTEGER NOT NULL DEFAULT 0,
+                bad_count INTEGER NOT NULL DEFAULT 0,
+                phase TEXT NOT NULL DEFAULT 'ZAKOŃCZONO',
+                messages_json TEXT NOT NULL DEFAULT '[]',
+                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                ended_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        ensure_column(conn, "training_sessions", "good_count", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "training_sessions", "bad_count", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "training_sessions", "phase", "TEXT NOT NULL DEFAULT 'ZAKOŃCZONO'")
+        ensure_column(conn, "training_sessions", "messages_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "training_sessions", "started_at", "TEXT")
+        ensure_column(conn, "training_sessions", "ended_at", "TEXT")
         conn.commit()
     finally:
         conn.close()
@@ -67,6 +104,64 @@ def hash_password(password: str, salt: bytes | None = None) -> tuple[bytes, byte
 def verify_password(password: str, salt: bytes, password_hash: bytes) -> bool:
     test_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120_000)
     return secrets.compare_digest(test_hash, password_hash)
+
+
+def get_user_by_username(conn, username: str):
+    clean_username = username.strip()
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="Username required")
+
+    row = conn.execute(
+        "SELECT id, username FROM users WHERE username = ?",
+        (clean_username,),
+    ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return row
+
+
+def count_feedback(messages: list[str]) -> tuple[int, int]:
+    good_count = 0
+    bad_count = 0
+
+    neutral_words = [
+        "oczekiwanie",
+        "kalibracja",
+        "podłączono",
+        "pokaż całą sylwetkę",
+        "rozłączono",
+    ]
+    good_words = ["dobra technika", "kalibracja udana"]
+
+    for message in messages:
+        lowered = message.lower()
+        if any(word in lowered for word in good_words):
+            good_count += 1
+        elif not any(word in lowered for word in neutral_words):
+            bad_count += 1
+
+    return good_count, bad_count
+
+
+def serialize_training_session(row):
+    try:
+        messages = json.loads(row["messages_json"] or "[]")
+    except json.JSONDecodeError:
+        messages = []
+
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "reps": row["reps"],
+        "phase": row["phase"],
+        "messages": messages,
+        "good_count": row["good_count"],
+        "bad_count": row["bad_count"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+    }
 
 
 @app.on_event("startup")
@@ -127,6 +222,75 @@ def login(payload: AuthPayload):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     return {"username": row["username"]}
+
+
+@app.post("/training-sessions")
+def create_training_session(payload: TrainingSessionPayload):
+    messages = [str(message).strip() for message in payload.messages if str(message).strip()]
+    phase = (payload.phase or "ZAKOŃCZONO").strip()
+    good_count, bad_count = count_feedback(messages)
+    messages_json = json.dumps(messages, ensure_ascii=False)
+
+    conn = get_connection()
+    try:
+        user = get_user_by_username(conn, payload.username)
+        cursor = conn.execute(
+            """
+            INSERT INTO training_sessions (
+                user_id, reps, good_count, bad_count, phase, messages_json, started_at, ended_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))
+            """,
+            (
+                user["id"],
+                payload.reps,
+                good_count,
+                bad_count,
+                phase,
+                messages_json,
+                payload.started_at,
+            ),
+        )
+        conn.commit()
+
+        row = conn.execute(
+            """
+            SELECT ts.id, u.username, ts.reps, ts.good_count, ts.bad_count,
+                   ts.phase, ts.messages_json, ts.started_at, ts.ended_at
+            FROM training_sessions ts
+            JOIN users u ON u.id = ts.user_id
+            WHERE ts.id = ?
+            """,
+            (cursor.lastrowid,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    return serialize_training_session(row)
+
+
+@app.get("/training-sessions")
+def list_training_sessions(username: str, limit: int = 20):
+    clean_limit = max(1, min(limit, 50))
+    conn = get_connection()
+    try:
+        user = get_user_by_username(conn, username)
+        rows = conn.execute(
+            """
+            SELECT ts.id, u.username, ts.reps, ts.good_count, ts.bad_count,
+                   ts.phase, ts.messages_json, ts.started_at, ts.ended_at
+            FROM training_sessions ts
+            JOIN users u ON u.id = ts.user_id
+            WHERE ts.user_id = ?
+            ORDER BY ts.ended_at DESC, ts.id DESC
+            LIMIT ?
+            """,
+            (user["id"], clean_limit),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return [serialize_training_session(row) for row in rows]
 
 
 class EMAFilter:
@@ -298,7 +462,6 @@ class CyberTrener:
             self.reps += 1
             self.state = "CONCENTRIC"
 
-
     def process_frame(self, landmarks):
         # Pobranie kątów
         angles = self._pobierz_katy(landmarks)
@@ -311,7 +474,7 @@ class CyberTrener:
         if not self.is_calibrated:
             msg = self._kalibruj(elbow, knee, torso, back)
             return msg, self.reps, "KALIBRACJA"
-        
+
         self._licz_powtorzenia(elbow)
 
         # Tłumaczenie stanu dla UI i zwrócenie wyniku
@@ -339,12 +502,12 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 payload = json.loads(data)
                 landmarks = payload.get("landmarks", [])
-                
+
                 if not landmarks or len(landmarks) < 33:
                     continue
-                    
+
                 messages, reps, phase = analyzer.process_frame(landmarks)
-                
+
                 await websocket.send_json({
                     "messages": messages,
                     "reps": reps,
