@@ -120,7 +120,7 @@ Notes:
 
 ```text
 audio/
-  main.py
+  voice_assistant.py
   requirements.txt
 backend/
   main.py
