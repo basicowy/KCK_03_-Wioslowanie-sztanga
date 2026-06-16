@@ -3,3 +3,7 @@ uvicorn
 pydantic
 numpy
 websockets
+edge_tts
+SpeechRecognition
+pygame
+pyaudio

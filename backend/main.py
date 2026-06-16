@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import hashlib
 import os
+import sys
 import secrets
 import sqlite3
 import math
@@ -12,6 +13,8 @@ import json
 
 BASE_DIR = os.path.dirname(__file__)
 DB_PATH = os.path.join(BASE_DIR, "app.db")
+sys.path.append(os.path.abspath(os.path.join(BASE_DIR, "..", "audio")))
+from voice_assistant import VoiceAssistant
 
 app = FastAPI()
 
@@ -346,7 +349,7 @@ class CyberTrener:
         self.error_counts = {"cat_back": 0, "knees": 0, "torso_up": 0}
         self.active_errors = {"cat_back": False, "knees": False, "torso_up": False}
         self.error_msgs = {
-            "cat_back": "Wyprostuj plecy! (Koci grzbiet)",
+            "cat_back": "Wyprostuj plecy!",
             "knees": "Zegnij kolana!",
             "torso_up": "Obniż tułów.",
         }
@@ -496,22 +499,37 @@ class CyberTrener:
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     analyzer = CyberTrener()
+    assistant = VoiceAssistant()
     try:
         while True:
             data = await websocket.receive_text()
             try:
                 payload = json.loads(data)
+                
+                if payload.get("type") == "voice_toggle":
+                    if payload.get("state"):
+                        await assistant.enable(analyzer.is_calibrated, analyzer.reps)
+                    else:
+                        await assistant.disable()
+                    continue
+                
                 landmarks = payload.get("landmarks", [])
-
                 if not landmarks or len(landmarks) < 33:
                     continue
-
+                    
                 messages, reps, phase = analyzer.process_frame(landmarks)
-
+                
+                errors = []
+                if phase == "POPRAW POZYCJĘ":
+                    errors = messages
+                    
+                await assistant.update(analyzer.is_calibrated, reps, errors)
+                
                 await websocket.send_json({
                     "messages": messages,
                     "reps": reps,
-                    "phase": phase
+                    "phase": phase,
+                    "voiceOn": assistant.enabled
                 })
             except json.JSONDecodeError:
                 print("Invalid JSON received")
@@ -519,3 +537,4 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"Error processing frame: {e}")
     except WebSocketDisconnect:
         print("Client disconnected")
+        await assistant.disable()

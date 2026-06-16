@@ -36,6 +36,7 @@ export default function App() {
   const [displayName, setDisplayName] = useState("");
 
   const [voiceOn, setVoiceOn] = useState(false);
+    const voiceOnRef = useRef(false);
 
   // Analiza cyber-trenera
   const [messages, setMessages] = useState(["Oczekiwanie na dane..."]);
@@ -208,6 +209,10 @@ export default function App() {
         if (data.messages) setMessages(data.messages);
         if (data.reps !== undefined) setReps(data.reps);
         if (data.phase) setPhase(data.phase);
+        if (data.voiceOn !== undefined) {
+           setVoiceOn(data.voiceOn);
+           voiceOnRef.current = data.voiceOn;
+        }
       } catch (err) {
         console.error("Błąd parsowania WS:", err);
       }
@@ -585,7 +590,14 @@ export default function App() {
                   <button
                     className="toggle"
                     aria-pressed={voiceOn}
-                    onClick={() => setVoiceOn((prev) => !prev)}
+                    onClick={() => {
+                      const next = !voiceOn;
+                      setVoiceOn(next);
+                      voiceOnRef.current = next;
+                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(JSON.stringify({ type: "voice_toggle", state: next }));
+                      }
+                    }}
                   >
                     <span className="toggle-label toggle-off">
                       Voice assistant off
