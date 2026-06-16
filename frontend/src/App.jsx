@@ -9,6 +9,22 @@ import "./App.css";
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 const wsUrl = import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws";
 
+const formatSessionDate = (value) => {
+  if (!value) return "Brak daty";
+
+  const normalizedValue = value.includes("T") ? value : value.replace(" ", "T");
+  const date = new Date(normalizedValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("pl-PL", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+};
+
 export default function App() {
   const [view, setView] = useState("menu");
   const [isAuthed, setIsAuthed] = useState(false);
@@ -26,6 +42,14 @@ export default function App() {
   const [reps, setReps] = useState(0);
   const [phase, setPhase] = useState("OCZEKIWANIE");
 
+  // Historia sesji zapisywana w SQLite
+  const [savedSessions, setSavedSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
+  const [selectedSessionId, setSelectedSessionId] = useState(null);
+  const [sessionStartedAt, setSessionStartedAt] = useState(null);
+
   const leftVideoRef = useRef(null);
   const leftCanvasRef = useRef(null);
   const streamsRef = useRef([]);
@@ -34,12 +58,29 @@ export default function App() {
   const requestRef = useRef(null);
   const wsRef = useRef(null);
   const lastSendTime = useRef(0);
+  const isSavingRef = useRef(false);
+
+  const activeUsername = displayName || accessId;
 
   const stopStreams = () => {
     streamsRef.current.forEach((stream) => {
       stream.getTracks().forEach((track) => track.stop());
     });
     streamsRef.current = [];
+  };
+
+  const stopWorkoutPreview = () => {
+    stopStreams();
+
+    if (requestRef.current) {
+      cancelAnimationFrame(requestRef.current);
+      requestRef.current = null;
+    }
+
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
   };
 
   const startCameras = async () => {
@@ -79,7 +120,83 @@ export default function App() {
     });
   };
 
+  const loadTrainingSessions = async (username = activeUsername) => {
+    const cleanUsername = username.trim();
+
+    if (!cleanUsername) {
+      return;
+    }
+
+    setSessionsLoading(true);
+    setSessionsError("");
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/training-sessions?username=${encodeURIComponent(cleanUsername)}`,
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.detail || "Nie udalo sie pobrac historii");
+      }
+
+      const payload = await response.json();
+      setSavedSessions(Array.isArray(payload) ? payload : []);
+    } catch (error) {
+      setSessionsError("Nie udało się pobrać zapisanych sesji.");
+      console.error(error);
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const saveWorkoutSession = async () => {
+    const cleanUsername = activeUsername.trim();
+
+    if (!cleanUsername || isSavingRef.current) {
+      return;
+    }
+
+    isSavingRef.current = true;
+    setSessionsError("");
+    setSaveNotice("");
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/training-sessions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: cleanUsername,
+          reps,
+          phase,
+          messages,
+          started_at: sessionStartedAt,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.detail || "Nie udalo sie zapisac sesji");
+      }
+
+      const savedSession = await response.json();
+      setSavedSessions((prev) => [savedSession, ...prev].slice(0, 20));
+      setSaveNotice(`Zapisano sesję: ${savedSession.reps} powtórzeń.`);
+    } catch (error) {
+      setSessionsError("Nie udało się zapisać sesji w bazie danych.");
+      console.error(error);
+    } finally {
+      isSavingRef.current = false;
+    }
+  };
+
   const connectWebSocket = () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
     wsRef.current = new WebSocket(wsUrl);
     wsRef.current.onopen = () => {
       console.log("WebSocket connected");
@@ -153,6 +270,12 @@ export default function App() {
   };
 
   const handleStart = async () => {
+    setReps(0);
+    setPhase("OCZEKIWANIE");
+    setMessages(["Oczekiwanie na dane..."]);
+    setSelectedSessionId(null);
+    setSaveNotice("");
+    setSessionStartedAt(new Date().toISOString());
     setView("workout");
     await startCameras();
     await initMediaPipe();
@@ -160,17 +283,29 @@ export default function App() {
     requestRef.current = requestAnimationFrame(animate);
   };
 
+  const handleFinishWorkout = async () => {
+    stopWorkoutPreview();
+    await saveWorkoutSession();
+    await loadTrainingSessions();
+    setView("menu");
+  };
+
   useEffect(() => {
     if (view !== "workout" && requestRef.current) {
       cancelAnimationFrame(requestRef.current);
+      requestRef.current = null;
     }
   }, [view]);
 
   useEffect(() => {
+    if (isAuthed && activeUsername.trim()) {
+      loadTrainingSessions(activeUsername);
+    }
+  }, [isAuthed, displayName]);
+
+  useEffect(() => {
     return () => {
-      stopStreams();
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
-      if (wsRef.current) wsRef.current.close();
+      stopWorkoutPreview();
     };
   }, []);
 
@@ -345,6 +480,87 @@ export default function App() {
                   <p>Przełączasz głosowy feedback jednym ruchem.</p>
                 </article>
               </div>
+
+              <article className="history-panel">
+                <div className="history-header">
+                  <div>
+                    <p className="eyebrow">Historia treningów</p>
+                    <h2>Zapisane powtórzenia</h2>
+                    <p className="history-subtitle">
+                      Każda zakończona sesja trafia do SQLite i zostaje tutaj w menu.
+                    </p>
+                  </div>
+                  <button
+                    className="btn btn--ghost"
+                    type="button"
+                    onClick={() => loadTrainingSessions()}
+                    disabled={sessionsLoading}
+                  >
+                    {sessionsLoading ? "Ładowanie..." : "Odśwież"}
+                  </button>
+                </div>
+
+                {saveNotice ? <p className="save-note">{saveNotice}</p> : null}
+                {sessionsError ? <p className="auth-error">{sessionsError}</p> : null}
+
+                {savedSessions.length === 0 && !sessionsLoading ? (
+                  <p className="history-empty">
+                    Brak zapisanych sesji. Zakończ trening przyciskiem „Zakończ i zapisz”,
+                    a wynik pojawi się w tym miejscu.
+                  </p>
+                ) : null}
+
+                {savedSessions.length > 0 ? (
+                  <div className="history-list">
+                    {savedSessions.map((session) => {
+                      const isOpen = selectedSessionId === session.id;
+                      const sessionMessages = Array.isArray(session.messages)
+                        ? session.messages
+                        : [];
+
+                      return (
+                        <article
+                          className={`history-card ${isOpen ? "is-open" : ""}`}
+                          key={session.id}
+                        >
+                          <button
+                            className="history-card-button"
+                            type="button"
+                            onClick={() =>
+                              setSelectedSessionId(isOpen ? null : session.id)
+                            }
+                          >
+                            <span className="history-date">
+                              {formatSessionDate(session.ended_at)}
+                            </span>
+                            <strong>{session.reps} powtórzeń</strong>
+                            <span className="chip">
+                              {session.phase || "Zapisano"}
+                            </span>
+                          </button>
+
+                          {isOpen ? (
+                            <div className="history-details">
+                              <p>Start: {formatSessionDate(session.started_at)}</p>
+                              {sessionMessages.length > 0 ? (
+                                <div className="history-messages">
+                                  {sessionMessages.map((message, idx) => (
+                                    <span className="history-message" key={idx}>
+                                      {message}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p>Brak zapisanych uwag dla tej sesji.</p>
+                              )}
+                            </div>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </article>
             </section>
 
             <section
@@ -359,6 +575,13 @@ export default function App() {
                   </p>
                 </div>
                 <div className="controls-right">
+                  <button
+                    className="btn btn--ghost"
+                    type="button"
+                    onClick={handleFinishWorkout}
+                  >
+                    Zakończ i zapisz
+                  </button>
                   <button
                     className="toggle"
                     aria-pressed={voiceOn}
