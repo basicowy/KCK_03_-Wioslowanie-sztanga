@@ -445,7 +445,7 @@ class CyberTrener:
 
             # Prawdziwa histereza stanu chroniąca przed "mruganiem"
             if not self.active_errors[key]:
-                if self.error_counts[key] >= 8:
+                if self.error_counts[key] >= 15:
                     self.active_errors[key] = True
             else:
                 if self.error_counts[key] <= 0:

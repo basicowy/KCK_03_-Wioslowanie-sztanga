@@ -3,6 +3,7 @@ import edge_tts
 import speech_recognition as sr
 import pygame as pg
 import os
+import uuid
 
 AUDIO_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -29,6 +30,15 @@ class VoiceAssistant:
         self.speak_task = None
         self.listen_task = None
 
+    def _clear_queue(self):
+        while not self.tts_queue.empty():
+            try:
+                self.tts_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        if pg.mixer.get_init():
+            pg.mixer.music.stop()
+
     async def _speak_loop(self):
         pg.mixer.init()
         while self.enabled:
@@ -41,7 +51,7 @@ class VoiceAssistant:
                 break
                 
             communicate = edge_tts.Communicate(text, "pl-PL-MarekNeural")
-            temp_file = os.path.join(AUDIO_DIR, f"response_{id(self)}.mp3")
+            temp_file = os.path.join(AUDIO_DIR, f"response_{uuid.uuid4().hex}.mp3")
             try:
                 await communicate.save(temp_file)
                 pg.mixer.music.load(temp_file)
@@ -50,7 +60,7 @@ class VoiceAssistant:
                     await asyncio.sleep(0.1)
                 pg.mixer.music.unload()
             except Exception as e:
-                print(f"TTS error: {e}")
+                print(f"Błąd TTS (odtwarzanie): {e}")
             finally:
                 try:
                     if os.path.exists(temp_file):
@@ -73,11 +83,15 @@ class VoiceAssistant:
                 return ""
 
     async def _listen_loop(self):
+        licz_words = ["licz", "powtórzenia", "policz"]
+        koryguj_words = ["koryg", "popraw", "technika", "korekt", "korygujemy", "koryguj"]
+        
         while self.enabled:
             text = await asyncio.to_thread(self._listen_once)
+            
             if not self.enabled:
                 break
-            
+                
             if "koniec" in text:
                 print("Asystent wyłączony komendą")
                 self.enabled = False
@@ -85,23 +99,34 @@ class VoiceAssistant:
                 self.mode = None
                 break
                 
-            if self.state == "LISTENING_MODE":
-                if "licz" in text:
-                    self.mode = "licz"
-                    if self.latest_is_calibrated:
-                        self.state = "ACTIVE"
-                        await self.tts_queue.put("Włączam tryb liczenia. Kamera jest już skonfigurowana, zaczynam odliczanie.")
-                    else:
-                        self.state = "WAITING_FOR_CALIBRATION_AFTER_MODE"
-                        await self.tts_queue.put("Włączam tryb liczenia. Skonfiguruj poprawnie ustawienie kamery, aby rozpocząć.")
-                elif "koryguj" in text:
-                    self.mode = "koryguj"
-                    if self.latest_is_calibrated:
-                        self.state = "ACTIVE"
-                        await self.tts_queue.put("Włączam tryb korygowania. Kamera jest już skonfigurowana, zaczynam korygowanie.")
-                    else:
-                        self.state = "WAITING_FOR_CALIBRATION_AFTER_MODE"
-                        await self.tts_queue.put("Włączam tryb korygowania. Skonfiguruj poprawnie ustawienie kamery, aby rozpocząć.")
+            if any(w in text for w in licz_words) and self.mode != "licz":
+                is_switch = self.mode is not None
+                self.mode = "licz"
+                self.last_spoken_rep = self.current_reps
+                self._clear_queue()
+                action_text = "Przełączam na" if is_switch else "Włączam"
+                if self.latest_is_calibrated:
+                    self.state = "ACTIVE"
+                    await self.tts_queue.put(f"{action_text} tryb liczenia.")
+                else:
+                    self.state = "WAITING_FOR_CALIBRATION_AFTER_MODE"
+                    await self.tts_queue.put(f"{action_text} tryb liczenia. Skonfiguruj właściwie ustawienie kamery, aby rozpocząć.")
+            
+            elif any(w in text for w in koryguj_words) and self.mode != "koryguj":
+                is_switch = self.mode is not None
+                self.mode = "koryguj"
+                self.last_spoken_errors.clear()
+                self._clear_queue()
+                action_text = "Przełączam na" if is_switch else "Włączam"
+                if self.latest_is_calibrated:
+                    self.state = "ACTIVE"
+                    await self.tts_queue.put(f"{action_text} tryb korygowania.")
+                else:
+                    self.state = "WAITING_FOR_CALIBRATION_AFTER_MODE"
+                    await self.tts_queue.put(f"{action_text} tryb korygowania. Skonfiguruj właściwie ustawienie kamery, aby rozpocząć.")
+            
+            if text:
+                print(f"Usłyszano: {text} | Aktualny tryb: {self.mode} | Stan: {self.state}")
 
     async def enable(self, is_calibrated, reps):
         if self.enabled: return
@@ -112,11 +137,7 @@ class VoiceAssistant:
         self.last_spoken_errors = set()
         self.latest_is_calibrated = is_calibrated
         
-        while not self.tts_queue.empty():
-            try:
-                self.tts_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        self._clear_queue()
             
         self.speak_task = asyncio.create_task(self._speak_loop())
         self.listen_task = asyncio.create_task(self._listen_loop())
